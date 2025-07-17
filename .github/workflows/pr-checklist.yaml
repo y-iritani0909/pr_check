@@ -69,6 +69,46 @@ jobs:
             // 全てのチェックが完了しているかチェック
             if (checkedItems === totalItems) {
               console.log('全てのチェックリストアイテムが完了しています');
+              
+              // チェック済みアイテムのコメントをチェック
+              const lines = prBody.split('\n');
+              let missingComments = 0;
+              
+              for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                if (line.match(/^- \[x\]/)) {
+                  console.log(`チェック済みアイテム発見: ${line}`);
+                  
+                  // 次の行以降でコメント行を探す
+                  let commentFound = false;
+                  for (let j = i + 1; j < lines.length && j < i + 5; j++) {
+                    const nextLine = lines[j];
+                    if (nextLine.includes('コメント:')) {
+                      // コメント行が見つかった場合、コメント内容をチェック
+                      const commentContent = nextLine.split('コメント:')[1];
+                      if (commentContent && commentContent.trim().length > 0) {
+                        console.log(`コメント内容: "${commentContent.trim()}"`);
+                        commentFound = true;
+                      } else {
+                        console.log(`空のコメント: ${nextLine}`);
+                      }
+                      break;
+                    }
+                  }
+                  
+                  if (!commentFound) {
+                    missingComments++;
+                    console.log(`コメントが記入されていません: ${line}`);
+                  }
+                }
+              }
+              
+              if (missingComments > 0) {
+                console.log(`チェック済みアイテムにコメントが記入されていません (${missingComments}件)`);
+                process.exit(1);
+              }
+              
+              console.log('全てのチェックリストアイテムが完了し、コメントも記入されています');
             } else {
               console.log(`チェックリストの完了が必要です (${checkedItems}/${totalItems})`);
               process.exit(1);
