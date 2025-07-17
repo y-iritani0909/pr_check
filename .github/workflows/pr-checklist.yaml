@@ -92,26 +92,36 @@ jobs:
                 if (line.match(/^- \[x\]/)) {
                   console.log(`チェック済みアイテム発見: ${line}`);
                   
-                  // 次の行以降でコメント行を探す
-                  let commentFound = false;
-                  for (let j = i + 1; j < lines.length && j < i + 5; j++) {
-                    const nextLine = lines[j];
-                    if (nextLine.includes('コメント:')) {
-                      // コメント行が見つかった場合、コメント内容をチェック
-                      const commentContent = nextLine.split('コメント:')[1];
-                      if (commentContent && commentContent.trim().length > 0) {
-                        console.log(`コメント内容: "${commentContent.trim()}"`);
-                        commentFound = true;
-                      } else {
-                        console.log(`空のコメント: ${nextLine}`);
-                      }
-                      break;
-                    }
-                  }
+                  // 対象の2つのチェックリストアイテムのみコメント必須
+                  const isRoleCheck = line.includes('ロールによる挙動の差異が実装されている');
+                  const isTestCheck = line.includes('作成したモジュール・クラス・関数のテストコードが追加・修正されている');
                   
-                  if (!commentFound) {
-                    missingComments++;
-                    console.log(`コメントが記入されていません: ${line}`);
+                  if (isRoleCheck || isTestCheck) {
+                    console.log(`コメント必須のアイテム: ${line}`);
+                    
+                    // 次の行以降でコメント行を探す
+                    let commentFound = false;
+                    for (let j = i + 1; j < lines.length && j < i + 5; j++) {
+                      const nextLine = lines[j];
+                      if (nextLine.includes('コメント:')) {
+                        // コメント行が見つかった場合、コメント内容をチェック
+                        const commentContent = nextLine.split('コメント:')[1];
+                        if (commentContent && commentContent.trim().length > 0) {
+                          console.log(`コメント内容: "${commentContent.trim()}"`);
+                          commentFound = true;
+                        } else {
+                          console.log(`空のコメント: ${nextLine}`);
+                        }
+                        break;
+                      }
+                    }
+                    
+                    if (!commentFound) {
+                      missingComments++;
+                      console.log(`コメントが記入されていません: ${line}`);
+                    }
+                  } else {
+                    console.log(`コメント不要のアイテム: ${line}`);
                   }
                 }
               }
