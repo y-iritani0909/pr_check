@@ -82,20 +82,6 @@ jobs:
             console.log('イベント名:', context.eventName);
             console.log('アクション:', context.payload.action);
 
-            // issue_commentイベントの場合、レビュアーチェックコメントの場合のみ実行
-            if (context.eventName === 'issue_comment') {
-              const commentBody = context.payload.comment.body || '';
-              const commentUser = context.payload.comment.user.login;
-
-              // 投稿元が bot で、レビュアーチェックリストのコメントか確認
-              if (commentUser !== 'github-actions[bot]' || !commentBody.includes('レビュアーチェック')) {
-                console.log('レビュアーチェックコメントではないため、処理をスキップします');
-                return;
-              }
-
-              console.log('レビュアーチェックコメントが編集されました');
-            }
-
             // PRの情報を取得
             let prNumber, prBody;
             if (context.eventName === 'pull_request') {
