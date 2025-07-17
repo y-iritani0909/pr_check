@@ -9,8 +9,21 @@ jobs:
   check-pr-checklist:
     runs-on: ubuntu-latest
     steps:
+      - name: Post reviewer checklist comment
+        if: github.event_name == 'pull_request' && github.event.action == 'opened'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            console.log('PR作成時にレビュアーチェックコメントを投稿します');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: "## レビュアーチェック\n\n- [ ] **ロールによる挙動の差異が実装されている**\n  コメント: \n\n- [ ] **作成したモジュール・クラス・関数のテストコードが追加・修正されている（コンポーネントテストも含む）**\n  コメント: \n\n---\n*このチェックリストは自動生成されています。レビュアーは上記の項目をチェックしてコメントを記入してください。*"
+            });
+
       - name: Reset checklist on push
-        if: github.event.action == 'synchronize'
+        if: github.event_name == 'pull_request' && github.event.action == 'synchronize'
         uses: actions/github-script@v6
         with:
           script: |
@@ -23,7 +36,7 @@ jobs:
 
             let prBody = pr.body || '';
 
-            // チェック済みのアイテムを未チェック状態に戻す
+            // PRテンプレートのチェックリストをリセット
             const resetBody = prBody.replace(/^- \[x\]/gm, '- [ ]');
 
             if (resetBody !== prBody) {
@@ -52,7 +65,7 @@ jobs:
             // チェック済みアイテムの数を取得
             const checkedItems = (prBody.match(/^- \[x\]/gm) || []).length;
 
-            console.log(`チェックリスト進捗: ${checkedItems}/${totalItems}`);
+            console.log(`PRテンプレートのチェックリスト進捗: ${checkedItems}/${totalItems}`);
 
             // チェックリストが存在しない場合は警告
             if (totalItems === 0) {
@@ -61,14 +74,14 @@ jobs:
             }
 
             // synchronizeイベントの場合は、チェックリストがリセットされるので常に失敗
-            if (context.payload.action === 'synchronize') {
+            if (context.eventName === 'pull_request' && context.payload.action === 'synchronize') {
               console.log('新しいコミットがpushされました。チェックリストを再確認してください');
               process.exit(1);
             }
 
-            // 全てのチェックが完了しているかチェック
+            // PRテンプレートの全てのチェックが完了しているかチェック
             if (checkedItems === totalItems) {
-              console.log('全てのチェックリストアイテムが完了しています');
+              console.log('PRテンプレートの全てのチェックリストアイテムが完了しています');
               
               // チェック済みアイテムのコメントをチェック
               const lines = prBody.split('\n');
@@ -108,8 +121,8 @@ jobs:
                 process.exit(1);
               }
               
-              console.log('全てのチェックリストアイテムが完了し、コメントも記入されています');
+              console.log('PRテンプレートの全てのチェックリストアイテムが完了し、コメントも記入されています');
             } else {
-              console.log(`チェックリストの完了が必要です (${checkedItems}/${totalItems})`);
+              console.log(`PRテンプレートのチェックリストの完了が必要です (${checkedItems}/${totalItems})`);
               process.exit(1);
             }
