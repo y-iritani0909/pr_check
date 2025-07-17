@@ -3,7 +3,7 @@ on:
   pull_request:
     types: [opened, edited, synchronize]
   issue_comment:
-    types: [created, edited]
+    types: [edited]
 permissions:
   pull-requests: write
   checks: write
