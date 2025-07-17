@@ -3,7 +3,7 @@ on:
   pull_request:
     types: [opened, edited, synchronize]
   issue_comment:
-    types: [created, edited]
+    types: [edited]
 permissions:
   pull-requests: write
   checks: write
@@ -81,16 +81,6 @@ jobs:
             console.log('ワークフローが開始されました');
             console.log('イベント名:', context.eventName);
             console.log('アクション:', context.payload.action);
-
-            // issue_commentイベントの場合、レビュアーチェックコメントの場合のみ実行
-            if (context.eventName === 'issue_comment') {
-              const commentBody = context.payload.comment.body || '';
-              if (!commentBody.includes('レビュアーチェック')) {
-                console.log('レビュアーチェックコメントではないため、処理をスキップします');
-                return;
-              }
-              console.log('レビュアーチェックコメントが編集されました');
-            }
 
             // PRの情報を取得
             let prNumber, prBody;
