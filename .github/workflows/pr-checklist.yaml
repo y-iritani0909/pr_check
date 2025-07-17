@@ -1,52 +1,129 @@
-name: "Sample Workflow"
+name: "PR Checklist Validation"
 on:
-  # Issue の作成、編集をトリガーとする
-  issues:
-    types: [opened, edited]
+  pull_request:
+    types: [opened, edited, synchronize]
 permissions:
-  issues: write
+  pull-requests: write
+  checks: write
 jobs:
-  setup:
-    # 不必要に Job が動作しないように適切にスキップする
-    # 以下の例では `[RELEASE] ...` というタイトルで作成された Issue のみを対象としている
-    if: github.event.action == 'opened' && startsWith(github.event.issue.title, '[RELEASE]')
+  check-pr-checklist:
     runs-on: ubuntu-latest
     steps:
-      - uses: wadackel/checkbox-workflow-action@v1
+      - name: Check PR Checklist
+        id: check-checklist
+        run: |
+          # PRの本文からチェックリストを抽出
+          pr_body='${{ github.event.pull_request.body }}'
+
+          # チェックリストアイテムの総数を取得
+          total_items=$(echo "$pr_body" | grep -c "^- \[" || echo "0")
+
+          # チェック済みアイテムの数を取得
+          checked_items=$(echo "$pr_body" | grep -c "^- \[x\]" || echo "0")
+
+          echo "Total checklist items: $total_items"
+          echo "Checked items: $checked_items"
+
+          # チェックリストが存在しない場合は警告
+          if [ $total_items -eq 0 ]; then
+            echo "::warning::PRテンプレートにチェックリストが見つかりません"
+            echo "has_checklist=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "has_checklist=true" >> $GITHUB_OUTPUT
+          echo "total_items=$total_items" >> $GITHUB_OUTPUT
+          echo "checked_items=$checked_items" >> $GITHUB_OUTPUT
+
+          # 全てのチェックが完了しているかチェック
+          if [ $checked_items -eq $total_items ]; then
+            echo "all_checked=true" >> $GITHUB_OUTPUT
+            echo "✅ 全てのチェックリストアイテムが完了しています"
+          else
+            echo "all_checked=false" >> $GITHUB_OUTPUT
+            echo "❌ チェックリストの完了が必要です ($checked_items/$total_items)"
+            exit 1
+          fi
+
+      - name: Comment on PR
+        if: steps.check-checklist.outputs.has_checklist == 'true' && steps.check-checklist.outputs.all_checked == 'false'
+        uses: actions/github-script@v6
         with:
-          id: deploy-checklist
-          number: ${{ github.event.issue.number }}
-          body: true
-          config: |
-            [
-              {"security": "Security team approved"},
-              {"qa": "QA team approved"},
-            ]
-          message: |
-            # Release Checklist
-            {{body}}
-  execute:
-    # Detection Mode では、対象の Issue Comment が変更された場合にのみ実行することを推奨
-    if: github.event.action == 'edited' && startsWith(github.event.issue.body, '<!-- checkbox-workflow-action:managed -->')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Detect changes
-        id: checklist
-        uses: wadackel/checkbox-workflow-action@v1
+          script: |
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(comment => 
+              comment.user.login === 'github-actions[bot]' && 
+              comment.body.includes('チェックリストの完了状況')
+            );
+
+            const totalItems = '${{ steps.check-checklist.outputs.total_items }}';
+            const checkedItems = '${{ steps.check-checklist.outputs.checked_items }}';
+
+            const commentBody = `## チェックリストの完了状況
+
+            **進捗**: ${checkedItems}/${totalItems} 完了
+
+            ❌ **マージするには全てのチェックリストアイテムを完了させてください**
+
+            ---
+            *このコメントは自動生成されています*`;
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: commentBody
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: commentBody
+              });
+            }
+
+      - name: Success Comment
+        if: steps.check-checklist.outputs.has_checklist == 'true' && steps.check-checklist.outputs.all_checked == 'true'
+        uses: actions/github-script@v6
         with:
-          id: deploy-checklist
-          number: ${{ github.event.issue.number }}
-          body: true
-      # Security team approved をチェックしたら...
-      - name: Security Approval
-        if: ${{ steps.checklist.outputs.changed == 'true' && contains(fromJSON(steps.checklist.outputs.changes), 'security') && fromJSON(steps.checklist.outputs.state).security }}
-        run: echo "Do something..."
-      # QA team approved をチェックしたら...
-      - name: QA Approval
-        if: ${{ steps.checklist.outputs.changed == 'true' && contains(fromJSON(steps.checklist.outputs.changes), 'qa') && fromJSON(steps.checklist.outputs.state).qa }}
-        run: echo "Do something..."
-      # 全てがチェックされたら...
-      # 最小限の例としていますが、Deploy 完了後に Issue を Close するといった連携も可
-      - name: Deploy
-        if: ${{ steps.checklist.outputs.all-checked == 'true' }}
-        run: echo "Deploying to production..."
+          script: |
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(comment => 
+              comment.user.login === 'github-actions[bot]' && 
+              comment.body.includes('チェックリストの完了状況')
+            );
+
+            const commentBody = `## チェックリストの完了状況
+
+            ✅ **全てのチェックリストアイテムが完了しました！マージ可能です**
+
+            ---
+            *このコメントは自動生成されています*`;
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: commentBody
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: commentBody
+              });
+            }
