@@ -72,53 +72,73 @@ jobs:
 
       - name: Check PR and Comment Checklists
         id: check-checklist
-        run: |
-          # PRの本文からレビュイー用チェックリストを抽出
-          pr_body='${{ github.event.pull_request.body }}'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            // PRの本文からレビュイー用チェックリストを抽出
+            const prBody = context.payload.pull_request.body || '';
 
-          # レビュイー用チェックリストアイテムの総数を取得
-          reviewee_total=$(echo "$pr_body" | grep -c "^- \[" || echo "0")
+            // レビュイー用チェックリストアイテムの総数を取得
+            const revieweeTotal = (prBody.match(/^- \[/gm) || []).length;
 
-          # レビュイー用チェック済みアイテムの数を取得
-          reviewee_checked=$(echo "$pr_body" | grep -c "^- \[x\]" || echo "0")
+            // レビュイー用チェック済みアイテムの数を取得
+            const revieweeChecked = (prBody.match(/^- \[x\]/gm) || []).length;
 
-          echo "レビュイー用チェックリスト: $reviewee_checked/$reviewee_total"
+            console.log(`レビュイー用チェックリスト: ${revieweeChecked}/${revieweeTotal}`);
 
-          # レビュイー用チェックリストが存在しない場合は警告
-          if [ $reviewee_total -eq 0 ]; then
-            echo "::warning::PRテンプレートにチェックリストが見つかりません"
-            exit 0
-          fi
+            // レビュイー用チェックリストが存在しない場合は警告
+            if (revieweeTotal === 0) {
+              console.log('::warning::PRテンプレートにチェックリストが見つかりません');
+              return;
+            }
 
-          # synchronizeイベントの場合は、チェックリストがリセットされるので常に失敗
-          if [ "${{ github.event.action }}" == "synchronize" ]; then
-            echo "新しいコミットがpushされました。チェックリストを再確認してください"
-            exit 1
-          fi
+            // synchronizeイベントの場合は、チェックリストがリセットされるので常に失敗
+            if (context.payload.action === 'synchronize') {
+              console.log('新しいコミットがpushされました。チェックリストを再確認してください');
+              process.exit(1);
+            }
 
-          # レビュアー用チェックリストをコメントから取得
-          reviewer_checked=0
-          reviewer_total=0
+            // レビュアー用チェックリストをコメントから取得
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
 
-          # GitHub API でコメントを取得
-          comments=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
+            console.log(`コメント数: ${comments.length}`);
 
-          # レビュアーチェックコメントを検索
-          reviewer_comment=$(echo "$comments" | jq -r '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("レビュアーチェック"))) | .body')
+            // レビュアーチェックコメントを検索
+            const reviewerComment = comments.find(comment => 
+              comment.user.login === 'github-actions[bot]' && 
+              comment.body.includes('レビュアーチェック')
+            );
 
-          if [ -n "$reviewer_comment" ]; then
-            reviewer_total=$(echo "$reviewer_comment" | grep -c "^- \[" || echo "0")
-            reviewer_checked=$(echo "$reviewer_comment" | grep -c "^- \[x\]" || echo "0")
-            echo "レビュアー用チェックリスト: $reviewer_checked/$reviewer_total"
-          fi
+            let reviewerTotal = 0;
+            let reviewerChecked = 0;
 
-          # 両方のチェックリストが完了しているかチェック
-          if [ $reviewee_checked -eq $reviewee_total ] && [ $reviewer_checked -eq $reviewer_total ] && [ $reviewer_total -gt 0 ]; then
-            echo "レビュイーとレビュアーの全てのチェックリストが完了しています"
-          else
-            echo "チェックリストの完了が必要です"
-            echo "レビュイー: $reviewee_checked/$reviewee_total"
-            echo "レビュアー: $reviewer_checked/$reviewer_total"
-            exit 1
-          fi
+            if (reviewerComment) {
+              console.log('レビュアーチェックコメント見つかりました');
+              console.log('コメント内容:', reviewerComment.body);
+              
+              reviewerTotal = (reviewerComment.body.match(/^- \[/gm) || []).length;
+              reviewerChecked = (reviewerComment.body.match(/^- \[x\]/gm) || []).length;
+              
+              console.log(`レビュアー用チェックリスト: ${reviewerChecked}/${reviewerTotal}`);
+            } else {
+              console.log('レビュアーチェックコメントが見つかりません');
+              // コメントが見つからない場合のデバッグ
+              console.log('既存のコメント:');
+              comments.forEach((comment, index) => {
+                console.log(`${index + 1}. ${comment.user.login}: ${comment.body.substring(0, 100)}...`);
+              });
+            }
+
+            // 両方のチェックリストが完了しているかチェック
+            if (revieweeChecked === revieweeTotal && reviewerChecked === reviewerTotal && reviewerTotal > 0) {
+              console.log('レビュイーとレビュアーの全てのチェックリストが完了しています');
+            } else {
+              console.log('チェックリストの完了が必要です');
+              console.log(`レビュイー: ${revieweeChecked}/${revieweeTotal}`);
+              console.log(`レビュアー: ${reviewerChecked}/${reviewerTotal}`);
+              process.exit(1);
+            }
