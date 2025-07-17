@@ -1,0 +1,52 @@
+name: "Sample Workflow"
+on:
+  # Issue の作成、編集をトリガーとする
+  issues:
+    types: [opened, edited]
+permissions:
+  issues: write
+jobs:
+  setup:
+    # 不必要に Job が動作しないように適切にスキップする
+    # 以下の例では `[RELEASE] ...` というタイトルで作成された Issue のみを対象としている
+    if: github.event.action == 'opened' && startsWith(github.event.issue.title, '[RELEASE]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: wadackel/checkbox-workflow-action@v1
+        with:
+          id: deploy-checklist
+          number: ${{ github.event.issue.number }}
+          body: true
+          config: |
+            [
+              {"security": "Security team approved"},
+              {"qa": "QA team approved"},
+            ]
+          message: |
+            # Release Checklist
+            {{body}}
+  execute:
+    # Detection Mode では、対象の Issue Comment が変更された場合にのみ実行することを推奨
+    if: github.event.action == 'edited' && startsWith(github.event.issue.body, '<!-- checkbox-workflow-action:managed -->')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Detect changes
+        id: checklist
+        uses: wadackel/checkbox-workflow-action@v1
+        with:
+          id: deploy-checklist
+          number: ${{ github.event.issue.number }}
+          body: true
+      # Security team approved をチェックしたら...
+      - name: Security Approval
+        if: ${{ steps.checklist.outputs.changed == 'true' && contains(fromJSON(steps.checklist.outputs.changes), 'security') && fromJSON(steps.checklist.outputs.state).security }}
+        run: echo "Do something..."
+      # QA team approved をチェックしたら...
+      - name: QA Approval
+        if: ${{ steps.checklist.outputs.changed == 'true' && contains(fromJSON(steps.checklist.outputs.changes), 'qa') && fromJSON(steps.checklist.outputs.state).qa }}
+        run: echo "Do something..."
+      # 全てがチェックされたら...
+      # 最小限の例としていますが、Deploy 完了後に Issue を Close するといった連携も可
+      - name: Deploy
+        if: ${{ steps.checklist.outputs.all-checked == 'true' }}
+        run: echo "Deploying to production..."
