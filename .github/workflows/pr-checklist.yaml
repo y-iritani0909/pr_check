@@ -2,11 +2,13 @@ name: "PR Checklist Validation"
 on:
   pull_request:
     types: [opened, edited, synchronize]
-  discussion_comment:
+  issue_comment:
     types: [edited]
+
 permissions:
   pull-requests: write
   checks: write
+
 jobs:
   check-pr-checklist:
     runs-on: ubuntu-latest
@@ -37,8 +39,6 @@ jobs:
             });
 
             let prBody = pr.body || '';
-
-            // レビュイー用チェックリストをリセット
             const resetBody = prBody.replace(/^- \[x\]/gm, '- [ ]');
 
             if (resetBody !== prBody) {
@@ -50,7 +50,6 @@ jobs:
               });
             }
 
-            // レビュアー用チェックリストコメントもリセット
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -82,83 +81,93 @@ jobs:
             console.log('イベント名:', context.eventName);
             console.log('アクション:', context.payload.action);
 
-            // PRの情報を取得
             let prNumber, prBody;
-            if (context.eventName === 'pull_request') {
-              prNumber = context.issue.number;
-              prBody = context.payload.pull_request.body || '';
-            } else {
-              // issue_comment イベントの場合
-              prNumber = context.issue.number;
+
+            if (context.eventName === 'issue_comment') {
+              const comment = context.payload.comment;
+              const commentBody = comment.body || '';
+              const commentUser = comment.user.login;
+
+              if (!context.payload.issue.pull_request) {
+                console.log('これはPRではなくIssueへのコメントです。スキップします。');
+                return;
+              }
+
+              if (commentUser !== 'github-actions[bot]' || !commentBody.includes('レビュアーチェック')) {
+                console.log('レビュアーチェックコメントではないため、処理をスキップします');
+                return;
+              }
+
+              prNumber = context.payload.issue.number;
+
               const { data: pr } = await github.rest.pulls.get({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 pull_number: prNumber,
               });
+
               prBody = pr.body || '';
-            }
 
-            // レビュイー用チェックリストアイテムの総数を取得
-            const revieweeTotal = (prBody.match(/^- \[/gm) || []).length;
+              // チェックリスト集計
+              const revieweeTotal = (prBody.match(/^- \[/gm) || []).length;
+              const revieweeChecked = (prBody.match(/^- \[x\]/gm) || []).length;
+              const reviewerTotal = (commentBody.match(/^- \[/gm) || []).length;
+              const reviewerChecked = (commentBody.match(/^- \[x\]/gm) || []).length;
 
-            // レビュイー用チェック済みアイテムの数を取得
-            const revieweeChecked = (prBody.match(/^- \[x\]/gm) || []).length;
-
-            console.log(`レビュイー用チェックリスト: ${revieweeChecked}/${revieweeTotal}`);
-
-            // レビュイー用チェックリストが存在しない場合は警告
-            if (revieweeTotal === 0) {
-              console.log('::warning::PRテンプレートにチェックリストが見つかりません');
-              return;
-            }
-
-            // synchronizeイベントの場合は、チェックリストがリセットされるので常に失敗
-            if (context.eventName === 'pull_request' && context.payload.action === 'synchronize') {
-              console.log('新しいコミットがpushされました。チェックリストを再確認してください');
-              process.exit(1);
-            }
-
-            // レビュアー用チェックリストをコメントから取得
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: prNumber,
-            });
-
-            console.log(`コメント数: ${comments.length}`);
-
-            // レビュアーチェックコメントを検索
-            const reviewerComment = comments.find(comment => 
-              comment.user.login === 'github-actions[bot]' && 
-              comment.body.includes('レビュアーチェック')
-            );
-
-            let reviewerTotal = 0;
-            let reviewerChecked = 0;
-
-            if (reviewerComment) {
-              console.log('レビュアーチェックコメント見つかりました');
-              console.log('コメント内容:', reviewerComment.body);
-              
-              reviewerTotal = (reviewerComment.body.match(/^- \[/gm) || []).length;
-              reviewerChecked = (reviewerComment.body.match(/^- \[x\]/gm) || []).length;
-              
-              console.log(`レビュアー用チェックリスト: ${reviewerChecked}/${reviewerTotal}`);
-            } else {
-              console.log('レビュアーチェックコメントが見つかりません');
-              // コメントが見つからない場合のデバッグ
-              console.log('既存のコメント:');
-              comments.forEach((comment, index) => {
-                console.log(`${index + 1}. ${comment.user.login}: ${comment.body.substring(0, 100)}...`);
-              });
-            }
-
-            // 両方のチェックリストが完了しているかチェック
-            if (revieweeChecked === revieweeTotal && reviewerChecked === reviewerTotal && reviewerTotal > 0) {
-              console.log('レビュイーとレビュアーの全てのチェックリストが完了しています');
-            } else {
-              console.log('チェックリストの完了が必要です');
               console.log(`レビュイー: ${revieweeChecked}/${revieweeTotal}`);
               console.log(`レビュアー: ${reviewerChecked}/${reviewerTotal}`);
-              process.exit(1);
+
+              if (revieweeChecked === revieweeTotal && reviewerChecked === reviewerTotal && reviewerTotal > 0) {
+                console.log('チェックリストがすべて完了しています');
+              } else {
+                console.log('チェックリストの完了が必要です');
+                process.exit(1);
+              }
+
+            } else if (context.eventName === 'pull_request') {
+              prNumber = context.issue.number;
+              prBody = context.payload.pull_request.body || '';
+
+              const revieweeTotal = (prBody.match(/^- \[/gm) || []).length;
+              const revieweeChecked = (prBody.match(/^- \[x\]/gm) || []).length;
+
+              console.log(`レビュイー: ${revieweeChecked}/${revieweeTotal}`);
+
+              if (revieweeTotal === 0) {
+                console.log('::warning::PRテンプレートにチェックリストが見つかりません');
+                return;
+              }
+
+              if (context.payload.action === 'synchronize') {
+                console.log('新しいコミットがpushされました。チェックリストを再確認してください');
+                process.exit(1);
+              }
+
+              const { data: comments } = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+              });
+
+              const reviewerComment = comments.find(comment => 
+                comment.user.login === 'github-actions[bot]' && 
+                comment.body.includes('レビュアーチェック')
+              );
+
+              if (reviewerComment) {
+                const reviewerTotal = (reviewerComment.body.match(/^- \[/gm) || []).length;
+                const reviewerChecked = (reviewerComment.body.match(/^- \[x\]/gm) || []).length;
+
+                console.log(`レビュアー: ${reviewerChecked}/${reviewerTotal}`);
+
+                if (revieweeChecked === revieweeTotal && reviewerChecked === reviewerTotal && reviewerTotal > 0) {
+                  console.log('チェックリストがすべて完了しています');
+                } else {
+                  console.log('チェックリストの完了が必要です');
+                  process.exit(1);
+                }
+              } else {
+                console.log('レビュアーチェックコメントが見つかりません');
+                process.exit(1);
+              }
             }
