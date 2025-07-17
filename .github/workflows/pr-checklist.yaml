@@ -2,7 +2,7 @@ name: "PR Checklist Validation"
 on:
   pull_request:
     types: [opened, edited, synchronize]
-  issue_comment:
+  discussion_comment:
     types: [edited]
 permissions:
   pull-requests: write
