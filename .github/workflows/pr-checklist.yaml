@@ -2,6 +2,8 @@ name: "PR Checklist Validation"
 on:
   pull_request:
     types: [opened, edited, synchronize]
+  issue_comment:
+    types: [created, edited]
 permissions:
   pull-requests: write
   checks: write
@@ -10,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Post reviewer checklist comment
-        if: github.event.action == 'opened'
+        if: github.event_name == 'pull_request' && github.event.action == 'opened'
         uses: actions/github-script@v6
         with:
           script: |
@@ -22,7 +24,7 @@ jobs:
             });
 
       - name: Reset checklist on push
-        if: github.event.action == 'synchronize'
+        if: github.event_name == 'pull_request' && github.event.action == 'synchronize'
         uses: actions/github-script@v6
         with:
           script: |
@@ -71,12 +73,26 @@ jobs:
             }
 
       - name: Check PR and Comment Checklists
+        if: github.event_name == 'pull_request' || (github.event_name == 'issue_comment' && github.event.comment.body.includes('レビュアーチェック'))
         id: check-checklist
         uses: actions/github-script@v6
         with:
           script: |
-            // PRの本文からレビュイー用チェックリストを抽出
-            const prBody = context.payload.pull_request.body || '';
+            // PRの情報を取得
+            let prNumber, prBody;
+            if (context.eventName === 'pull_request') {
+              prNumber = context.issue.number;
+              prBody = context.payload.pull_request.body || '';
+            } else {
+              // issue_comment イベントの場合
+              prNumber = context.issue.number;
+              const { data: pr } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+              });
+              prBody = pr.body || '';
+            }
 
             // レビュイー用チェックリストアイテムの総数を取得
             const revieweeTotal = (prBody.match(/^- \[/gm) || []).length;
@@ -93,7 +109,7 @@ jobs:
             }
 
             // synchronizeイベントの場合は、チェックリストがリセットされるので常に失敗
-            if (context.payload.action === 'synchronize') {
+            if (context.eventName === 'pull_request' && context.payload.action === 'synchronize') {
               console.log('新しいコミットがpushされました。チェックリストを再確認してください');
               process.exit(1);
             }
@@ -102,7 +118,7 @@ jobs:
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.issue.number,
+              issue_number: prNumber,
             });
 
             console.log(`コメント数: ${comments.length}`);
