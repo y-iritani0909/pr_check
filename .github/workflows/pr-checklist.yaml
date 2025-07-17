@@ -64,6 +64,28 @@ jobs:
           # 全てのチェックが完了しているかチェック
           if [ $checked_items -eq $total_items ]; then
             echo "全てのチェックリストアイテムが完了しています"
+            
+            # チェック済みアイテムのコメントをチェック
+            echo "$pr_body" > /tmp/pr_body.txt
+            
+            # チェック済みアイテムのコメントが記入されているかチェック
+            missing_comments=0
+            while IFS= read -r line; do
+              if [[ "$line" =~ ^-\ \[x\] ]]; then
+                # 次の行がコメント行かチェック
+                next_line=$(grep -A1 -F "$line" /tmp/pr_body.txt | tail -n1)
+                if [[ "$next_line" =~ ^[[:space:]]*コメント:[[:space:]]*$ ]] || [[ ! "$next_line" =~ ^[[:space:]]*コメント: ]]; then
+                  missing_comments=$((missing_comments + 1))
+                fi
+              fi
+            done <<< "$pr_body"
+            
+            if [ $missing_comments -gt 0 ]; then
+              echo "チェック済みアイテムにコメントが記入されていません ($missing_comments件)"
+              exit 1
+            fi
+            
+            echo "全てのチェックリストアイテムが完了し、コメントも記入されています"
           else
             echo "チェックリストの完了が必要です ($checked_items/$total_items)"
             exit 1
