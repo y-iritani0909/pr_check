@@ -9,6 +9,18 @@ jobs:
   check-pr-checklist:
     runs-on: ubuntu-latest
     steps:
+      - name: Post reviewer checklist comment
+        if: github.event.action == 'opened'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: "## レビュアーチェック\n\n- [ ] **ロールによる挙動の差異が実装されている**\n  コメント: \n\n- [ ] **作成したモジュール・クラス・関数のテストコードが追加・修正されている（コンポーネントテストも含む）**\n  コメント: \n\n---\n*このチェックリストは自動生成されています。レビュアーは上記の項目をチェックしてコメントを記入してください。*"
+            });
+
       - name: Reset checklist on push
         if: github.event.action == 'synchronize'
         uses: actions/github-script@v6
@@ -22,7 +34,7 @@ jobs:
 
             let prBody = pr.body || '';
 
-            // チェック済みのアイテムを未チェック状態に戻す
+            // レビュイー用チェックリストをリセット
             const resetBody = prBody.replace(/^- \[x\]/gm, '- [ ]');
 
             if (resetBody !== prBody) {
@@ -34,23 +46,46 @@ jobs:
               });
             }
 
-      - name: Check PR Checklist
+            // レビュアー用チェックリストコメントもリセット
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const reviewerComment = comments.find(comment => 
+              comment.user.login === 'github-actions[bot]' && 
+              comment.body.includes('レビュアーチェック')
+            );
+
+            if (reviewerComment) {
+              const resetCommentBody = reviewerComment.body.replace(/^- \[x\]/gm, '- [ ]');
+              if (resetCommentBody !== reviewerComment.body) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: reviewerComment.id,
+                  body: resetCommentBody
+                });
+              }
+            }
+
+      - name: Check PR and Comment Checklists
         id: check-checklist
         run: |
-          # PRの本文からチェックリストを抽出
+          # PRの本文からレビュイー用チェックリストを抽出
           pr_body='${{ github.event.pull_request.body }}'
 
-          # チェックリストアイテムの総数を取得
-          total_items=$(echo "$pr_body" | grep -c "^- \[" || echo "0")
+          # レビュイー用チェックリストアイテムの総数を取得
+          reviewee_total=$(echo "$pr_body" | grep -c "^- \[" || echo "0")
 
-          # チェック済みアイテムの数を取得
-          checked_items=$(echo "$pr_body" | grep -c "^- \[x\]" || echo "0")
+          # レビュイー用チェック済みアイテムの数を取得
+          reviewee_checked=$(echo "$pr_body" | grep -c "^- \[x\]" || echo "0")
 
-          echo "Total checklist items: $total_items"
-          echo "Checked items: $checked_items"
+          echo "レビュイー用チェックリスト: $reviewee_checked/$reviewee_total"
 
-          # チェックリストが存在しない場合は警告
-          if [ $total_items -eq 0 ]; then
+          # レビュイー用チェックリストが存在しない場合は警告
+          if [ $reviewee_total -eq 0 ]; then
             echo "::warning::PRテンプレートにチェックリストが見つかりません"
             exit 0
           fi
@@ -61,27 +96,29 @@ jobs:
             exit 1
           fi
 
-          # 全てのチェックが完了しているかチェック
-          if [ $checked_items -eq $total_items ]; then
-            echo "全てのチェックリストアイテムが完了しています"
-            
-            # チェック済みアイテムのコメントをチェック
-            missing_comments=0
-            
-            # 各チェック済みアイテムをチェック
-            checked_items_with_comments=$(echo "$pr_body" | grep -A1 "^- \[x\]" | grep -c "コメント:.*[^ ]")
-            
-            echo "チェック済みアイテム数: $checked_items"
-            echo "コメント付きアイテム数: $checked_items_with_comments"
-            
-            if [ $checked_items_with_comments -lt $checked_items ]; then
-              missing_comments=$((checked_items - checked_items_with_comments))
-              echo "チェック済みアイテムにコメントが記入されていません ($missing_comments件)"
-              exit 1
-            fi
-            
-            echo "全てのチェックリストアイテムが完了し、コメントも記入されています"
+          # レビュアー用チェックリストをコメントから取得
+          reviewer_checked=0
+          reviewer_total=0
+
+          # GitHub API でコメントを取得
+          comments=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
+
+          # レビュアーチェックコメントを検索
+          reviewer_comment=$(echo "$comments" | jq -r '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("レビュアーチェック"))) | .body')
+
+          if [ -n "$reviewer_comment" ]; then
+            reviewer_total=$(echo "$reviewer_comment" | grep -c "^- \[" || echo "0")
+            reviewer_checked=$(echo "$reviewer_comment" | grep -c "^- \[x\]" || echo "0")
+            echo "レビュアー用チェックリスト: $reviewer_checked/$reviewer_total"
+          fi
+
+          # 両方のチェックリストが完了しているかチェック
+          if [ $reviewee_checked -eq $reviewee_total ] && [ $reviewer_checked -eq $reviewer_total ] && [ $reviewer_total -gt 0 ]; then
+            echo "レビュイーとレビュアーの全てのチェックリストが完了しています"
           else
-            echo "チェックリストの完了が必要です ($checked_items/$total_items)"
+            echo "チェックリストの完了が必要です"
+            echo "レビュイー: $reviewee_checked/$reviewee_total"
+            echo "レビュアー: $reviewer_checked/$reviewer_total"
             exit 1
           fi
