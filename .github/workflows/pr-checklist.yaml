@@ -9,6 +9,31 @@ jobs:
   check-pr-checklist:
     runs-on: ubuntu-latest
     steps:
+      - name: Reset checklist on push
+        if: github.event.action == 'synchronize'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+
+            let prBody = pr.body || '';
+
+            // チェック済みのアイテムを未チェック状態に戻す
+            const resetBody = prBody.replace(/^- \[x\]/gm, '- [ ]');
+
+            if (resetBody !== prBody) {
+              await github.rest.pulls.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number,
+                body: resetBody
+              });
+            }
+
       - name: Check PR Checklist
         id: check-checklist
         run: |
@@ -27,103 +52,19 @@ jobs:
           # チェックリストが存在しない場合は警告
           if [ $total_items -eq 0 ]; then
             echo "::warning::PRテンプレートにチェックリストが見つかりません"
-            echo "has_checklist=false" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          echo "has_checklist=true" >> $GITHUB_OUTPUT
-          echo "total_items=$total_items" >> $GITHUB_OUTPUT
-          echo "checked_items=$checked_items" >> $GITHUB_OUTPUT
-
-          # 全てのチェックが完了しているかチェック
-          if [ $checked_items -eq $total_items ]; then
-            echo "all_checked=true" >> $GITHUB_OUTPUT
-            echo "✅ 全てのチェックリストアイテムが完了しています"
-          else
-            echo "all_checked=false" >> $GITHUB_OUTPUT
-            echo "❌ チェックリストの完了が必要です ($checked_items/$total_items)"
+          # synchronizeイベントの場合は、チェックリストがリセットされるので常に失敗
+          if [ "${{ github.event.action }}" == "synchronize" ]; then
+            echo "新しいコミットがpushされました。チェックリストを再確認してください"
             exit 1
           fi
 
-      - name: Comment on PR
-        if: steps.check-checklist.outputs.has_checklist == 'true' && steps.check-checklist.outputs.all_checked == 'false'
-        uses: actions/github-script@v6
-        with:
-          script: |
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-
-            const botComment = comments.find(comment => 
-              comment.user.login === 'github-actions[bot]' && 
-              comment.body.includes('チェックリストの完了状況')
-            );
-
-            const totalItems = '${{ steps.check-checklist.outputs.total_items }}';
-            const checkedItems = '${{ steps.check-checklist.outputs.checked_items }}';
-
-            const commentBody = `## チェックリストの完了状況
-
-            **進捗**: ${checkedItems}/${totalItems} 完了
-
-            ❌ **マージするには全てのチェックリストアイテムを完了させてください**
-
-            ---
-            *このコメントは自動生成されています*`;
-
-            if (botComment) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body: commentBody
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body: commentBody
-              });
-            }
-
-      - name: Success Comment
-        if: steps.check-checklist.outputs.has_checklist == 'true' && steps.check-checklist.outputs.all_checked == 'true'
-        uses: actions/github-script@v6
-        with:
-          script: |
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-
-            const botComment = comments.find(comment => 
-              comment.user.login === 'github-actions[bot]' && 
-              comment.body.includes('チェックリストの完了状況')
-            );
-
-            const commentBody = `## チェックリストの完了状況
-
-            ✅ **全てのチェックリストアイテムが完了しました！マージ可能です**
-
-            ---
-            *このコメントは自動生成されています*`;
-
-            if (botComment) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body: commentBody
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body: commentBody
-              });
-            }
+          # 全てのチェックが完了しているかチェック
+          if [ $checked_items -eq $total_items ]; then
+            echo "全てのチェックリストアイテムが完了しています"
+          else
+            echo "チェックリストの完了が必要です ($checked_items/$total_items)"
+            exit 1
+          fi
